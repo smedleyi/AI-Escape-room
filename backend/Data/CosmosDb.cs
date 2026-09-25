@@ -29,10 +29,11 @@ public class CosmosDb
         }
     }
 
-    public static async Task<List<T>> ReadAllAsync<T>(Container container)
+    public static async Task<List<T>> ReadAllAsync<T>(Container container, string? partitionKey = null)
     {
+        var options = partitionKey is null ? null : new QueryRequestOptions { PartitionKey = new PartitionKey(partitionKey) };
         var results = new List<T>();
-        using var feed = container.GetItemQueryIterator<T>("SELECT * FROM c");
+        using var feed = container.GetItemQueryIterator<T>("SELECT * FROM c", requestOptions: options);
         while (feed.HasMoreResults)
         {
             results.AddRange(await feed.ReadNextAsync());

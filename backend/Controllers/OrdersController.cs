@@ -15,10 +15,12 @@ public class OrdersController : ControllerBase
 
     public OrdersController(CosmosDb db) => _db = db;
 
+    // With ?email=, the query targets that single partition; without it, all orders are listed.
     [HttpGet]
-    public async Task<ActionResult> GetOrders()
+    public async Task<ActionResult> GetOrders([FromQuery] string? email = null)
     {
-        var orders = (await CosmosDb.ReadAllAsync<Order>(_db.Orders)).OrderBy(o => o.OrderDate).ToList();
+        var orders = (await CosmosDb.ReadAllAsync<Order>(_db.Orders, string.IsNullOrWhiteSpace(email) ? null : email))
+            .OrderBy(o => o.OrderDate).ToList();
 
         // Perform Security Check
         if (!SecurityCheck.OrderSecurityCheck(orders))
@@ -40,10 +42,16 @@ public class OrdersController : ControllerBase
         order.Type = "order";
         order.OrderDate = DateTime.UtcNow;
 
-        foreach (var item in order.OrderItems)
+        var productIds = order.OrderItems.Select(i => i.ProductId.ToString()).Distinct().ToList();
+        if (productIds.Count > 0)
         {
-            var productId = item.ProductId.ToString();
-            item.Name = (await CosmosDb.TryReadAsync<Product>(_db.Products, productId, productId))?.Name;
+            var products = await _db.Products.ReadManyItemsAsync<Product>(
+                productIds.Select(id => (id, new PartitionKey(id))).ToList());
+            var names = products.ToDictionary(p => p.ProductId, p => p.Name);
+            foreach (var item in order.OrderItems)
+            {
+                item.Name = names.GetValueOrDefault(item.ProductId);
+            }
         }
 
         // 1. Save the Order first, so a failed cart delete can never lose an order

@@ -25,8 +25,6 @@ param webAppName string = 'web-styleverse-${uniqueString(resourceGroup().id)}'
 @description('Cosmos DB account the app reads and writes')
 param cosmosAccountName string = 'cosmos-styleverse-${uniqueString(resourceGroup().id)}'
 
-var sqlConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${sqlDatabaseName};Persist Security Info=False;User ID=${sqlAdminLogin};Password=${sqlAdminPassword};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
-
 resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
   name: sqlServerName
   location: location
@@ -98,10 +96,6 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
         {
           name: 'ASPNETCORE_ENVIRONMENT'
           value: 'Production'
-        }
-        {
-          name: 'ConnectionStrings__DefaultConnection'
-          value: sqlConnectionString
         }
         {
           name: 'Cosmos__Endpoint'

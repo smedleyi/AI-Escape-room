@@ -28,6 +28,7 @@ if (string.IsNullOrWhiteSpace(cosmosEndpoint))
 builder.Services.AddSingleton(new CosmosClient(cosmosEndpoint, new DefaultAzureCredential(), new CosmosClientOptions
 {
     ApplicationName = "StyleVerse",
+    ApplicationRegion = Regions.UKSouth,
     UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web),
 }));
 builder.Services.AddSingleton<CosmosDb>();
