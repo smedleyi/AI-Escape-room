@@ -3,14 +3,16 @@ SET NOCOUNT ON;
 SELECT (
     SELECT
         CAST(p.Id AS NVARCHAR(20)) AS id,
+        p.Id AS productId,
         'product' AS type,
+        p.CategoryId AS categoryId,
+        c.Name AS category,
         p.Name AS name,
         p.Description AS description,
         p.Price AS price,
         p.InventoryCount AS inventoryCount,
-        p.CreatedDate AS createdDate,
-        c.Id AS [category.id],
-        c.Name AS [category.name],
+        -- Azure SQL GETDATE() is UTC
+        CONVERT(VARCHAR(30), p.CreatedDate, 126) + 'Z' AS createdDate,
         JSON_QUERY(ISNULL((
             SELECT '[' + STRING_AGG('"' + STRING_ESCAPE(t.Name, 'json') + '"', ',') WITHIN GROUP (ORDER BY t.Name) + ']'
             FROM ProductTags pt

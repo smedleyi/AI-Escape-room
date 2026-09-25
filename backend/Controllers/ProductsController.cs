@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using StyleVerse.Backend.Data;
 using StyleVerse.Backend.Models;
 
@@ -9,19 +8,28 @@ namespace StyleVerse.Backend.Controllers
     [Route("api/[controller]")]
     public class ProductsController : ControllerBase
     {
-        private readonly AppDbContext _context;
+        private readonly CosmosDb _db;
 
-        public ProductsController(AppDbContext context)
+        public ProductsController(CosmosDb db)
         {
-            _context = context;
+            _db = db;
         }
 
         [HttpGet]
         public async Task<ActionResult<IEnumerable<Product>>> GetProducts()
         {
-            // Simulating "Legacy" latency (optional helper)
-            // await Task.Delay(100); 
-            return await _context.Products.ToListAsync();
+            var products = await CosmosDb.ReadAllAsync<Product>(_db.Products);
+            return products.OrderBy(p => p.ProductId).ToList();
+        }
+
+        // Point read: id is also the partition key, so this costs ~1 RU.
+        [HttpGet("{id}")]
+        public async Task<ActionResult<Product>> GetProduct(string id)
+        {
+            if (!CosmosDb.IsValidId(id)) return BadRequest();
+
+            var product = await CosmosDb.TryReadAsync<Product>(_db.Products, id, id);
+            return product is null ? NotFound() : product;
         }
     }
 }

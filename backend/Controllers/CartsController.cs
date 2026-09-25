@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.Azure.Cosmos;
 using StyleVerse.Backend.Data;
 using StyleVerse.Backend.Models;
 
@@ -9,50 +9,63 @@ namespace StyleVerse.Backend.Controllers
     [Route("api/[controller]")]
     public class CartsController : ControllerBase
     {
-        private readonly AppDbContext _context;
+        private readonly CosmosDb _db;
 
-        public CartsController(AppDbContext context)
+        public CartsController(CosmosDb db)
         {
-            _context = context;
+            _db = db;
         }
 
         [HttpGet("{sessionId}")]
-        public async Task<ActionResult<IEnumerable<CartItem>>> GetCart(string sessionId)
+        public async Task<ActionResult<IEnumerable<CartItemView>>> GetCart(string sessionId)
         {
-            return await _context.CartItems
-                .Where(c => c.SessionId == sessionId)
-                .Include(c => c.Product)
-                .ToListAsync();
+            if (!CosmosDb.IsValidId(sessionId)) return BadRequest();
+
+            var cart = await CosmosDb.TryReadAsync<Cart>(_db.Carts, sessionId, sessionId);
+            return (cart?.Items ?? new()).Select(l => ToView(sessionId, l)).ToList();
         }
 
         [HttpPost]
-        public async Task<ActionResult<CartItem>> AddToCart(CartItem item)
+        public async Task<ActionResult<CartItemView>> AddToCart(AddToCartRequest request)
         {
-            var existing = await _context.CartItems
-                .FirstOrDefaultAsync(c => c.SessionId == item.SessionId && c.ProductId == item.ProductId);
+            if (!CosmosDb.IsValidId(request.SessionId) || request.Quantity < 1) return BadRequest();
 
-            if (existing != null)
+            var productId = request.ProductId.ToString();
+            var product = await CosmosDb.TryReadAsync<Product>(_db.Products, productId, productId);
+            if (product is null) return BadRequest("Unknown product.");
+
+            var cart = await CosmosDb.TryReadAsync<Cart>(_db.Carts, request.SessionId, request.SessionId)
+                ?? new Cart { Id = request.SessionId, SessionId = request.SessionId };
+
+            var line = cart.Items.FirstOrDefault(l => l.ProductId == product.ProductId);
+            if (line is null)
             {
-                existing.Quantity += item.Quantity;
+                line = new CartLine { ProductId = product.ProductId, Name = product.Name, Price = product.Price, Quantity = request.Quantity };
+                cart.Items.Add(line);
             }
             else
             {
-                _context.CartItems.Add(item);
+                line.Quantity += request.Quantity;
             }
 
-            await _context.SaveChangesAsync();
-            return Ok(item);
+            await _db.Carts.UpsertItemAsync(cart, new PartitionKey(cart.SessionId));
+            return Ok(ToView(cart.SessionId, line));
         }
-        
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> RemoveFromCart(int id)
-        {
-             var item = await _context.CartItems.FindAsync(id);
-             if (item == null) return NotFound();
 
-             _context.CartItems.Remove(item);
-             await _context.SaveChangesAsync();
-             return NoContent();
+        [HttpDelete("{sessionId}/{productId:int}")]
+        public async Task<IActionResult> RemoveFromCart(string sessionId, int productId)
+        {
+            if (!CosmosDb.IsValidId(sessionId)) return BadRequest();
+
+            var cart = await CosmosDb.TryReadAsync<Cart>(_db.Carts, sessionId, sessionId);
+            if (cart is null || cart.Items.RemoveAll(l => l.ProductId == productId) == 0) return NotFound();
+
+            await _db.Carts.UpsertItemAsync(cart, new PartitionKey(cart.SessionId));
+            return NoContent();
         }
+
+        private static CartItemView ToView(string sessionId, CartLine line) =>
+            new(line.ProductId.ToString(), sessionId, line.ProductId, line.Quantity, line.DateAdded,
+                new CartProductView(line.ProductId, line.Name, line.Price));
     }
 }

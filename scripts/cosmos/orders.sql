@@ -7,7 +7,7 @@ SELECT (
         'order' AS type,
         o.CustomerName AS customerName,
         o.TotalAmount AS totalAmount,
-        o.OrderDate AS orderDate,
+        CONVERT(VARCHAR(30), o.OrderDate, 126) + 'Z' AS orderDate,
         o.ShippingRegion AS shippingRegion,
         o.Status AS status,
         (
@@ -20,7 +20,7 @@ SELECT (
             JOIN Products p ON p.Id = oi.ProductId
             WHERE oi.OrderId = o.Id
             FOR JSON PATH
-        ) AS items
+        ) AS orderItems
     FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
 )
 FROM Orders o

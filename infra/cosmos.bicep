@@ -10,6 +10,12 @@ param accountName string = 'cosmos-styleverse-${uniqueString(resourceGroup().id)
 @minValue(1000)
 param autoscaleMaxThroughput int = 1000
 
+@description('Web app whose managed identity gets Cosmos data read/write access')
+param webAppName string = 'web-styleverse-${uniqueString(resourceGroup().id)}'
+
+@description('Optional Entra object IDs (e.g. developers) that also get data read/write access')
+param extraDataContributorIds array = []
+
 var databaseName = 'StyleVerseDb'
 
 var containers = [
@@ -91,6 +97,33 @@ resource sqlContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
         maxThroughput: autoscaleMaxThroughput
       }
     }
+  }
+}]
+
+resource webApp 'Microsoft.Web/sites@2023-01-01' existing = {
+  name: webAppName
+}
+
+// Built-in "Cosmos DB Built-in Data Contributor" role
+var dataContributorRoleId = '${account.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
+
+resource webAppDataContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
+  parent: account
+  name: guid(account.id, webApp.id, dataContributorRoleId)
+  properties: {
+    roleDefinitionId: dataContributorRoleId
+    principalId: webApp.identity.principalId
+    scope: account.id
+  }
+}
+
+resource extraDataContributors 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = [for principalId in extraDataContributorIds: {
+  parent: account
+  name: guid(account.id, principalId, dataContributorRoleId)
+  properties: {
+    roleDefinitionId: dataContributorRoleId
+    principalId: principalId
+    scope: account.id
   }
 }]
 

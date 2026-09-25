@@ -22,6 +22,9 @@ param appServicePlanName string = 'asp-styleverse-${uniqueString(resourceGroup()
 @description('Name of the web app')
 param webAppName string = 'web-styleverse-${uniqueString(resourceGroup().id)}'
 
+@description('Cosmos DB account the app reads and writes')
+param cosmosAccountName string = 'cosmos-styleverse-${uniqueString(resourceGroup().id)}'
+
 var sqlConnectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${sqlDatabaseName};Persist Security Info=False;User ID=${sqlAdminLogin};Password=${sqlAdminPassword};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;'
 
 resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
@@ -79,11 +82,15 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
   name: webAppName
   location: location
   kind: 'app,linux'
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     serverFarmId: appServicePlan.id
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: 'DOTNETCORE|8.0'
+      appCommandLine: 'dotnet StyleVerse.Backend.dll'
       alwaysOn: true
       ftpsState: 'FtpsOnly'
       minTlsVersion: '1.2'
@@ -96,6 +103,14 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
           name: 'ConnectionStrings__DefaultConnection'
           value: sqlConnectionString
         }
+        {
+          name: 'Cosmos__Endpoint'
+          value: 'https://${cosmosAccountName}.documents.azure.com:443/'
+        }
+        {
+          name: 'Cosmos__Database'
+          value: 'StyleVerseDb'
+        }
       ]
     }
   }
@@ -105,4 +120,5 @@ output sqlServerName string = sqlServer.name
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output databaseName string = sqlDatabase.name
 output webAppName string = webApp.name
+output webAppPrincipalId string = webApp.identity.principalId
 output webAppUrl string = 'https://${webApp.properties.defaultHostName}'

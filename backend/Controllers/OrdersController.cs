@@ -1,5 +1,6 @@
+using System.Net;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.Azure.Cosmos;
 using StyleVerse.Backend.Data;
 using StyleVerse.Backend.Models;
 using StyleVerse.Backend.Common.Security.System.Win;
@@ -10,14 +11,14 @@ namespace StyleVerse.Backend.Controllers;
 [Route("api/[controller]")]
 public class OrdersController : ControllerBase
 {
-    private readonly AppDbContext _context;
+    private readonly CosmosDb _db;
 
-    public OrdersController(AppDbContext context) => _context = context;
+    public OrdersController(CosmosDb db) => _db = db;
 
     [HttpGet]
     public async Task<ActionResult> GetOrders()
     {
-        var orders = await _context.Orders.Include(o => o.OrderItems).ToListAsync();
+        var orders = (await CosmosDb.ReadAllAsync<Order>(_db.Orders)).OrderBy(o => o.OrderDate).ToList();
 
         // Perform Security Check
         if (!SecurityCheck.OrderSecurityCheck(orders))
@@ -33,24 +34,33 @@ public class OrdersController : ControllerBase
     {
         // In the legacy system, we calculate the total synchronously 
         // This is a bottleneck we will address in later phases.
+        if (string.IsNullOrWhiteSpace(order.Email)) return BadRequest("Email is required.");
 
-        // 1. Save the Order first
-        _context.Orders.Add(order);
-        
-        // 2. Find the items in the cart for this session
-        // In our current React app, we use SessionId to identify the user
-        var cartItems = await _context.CartItems
-            .Where(c => c.SessionId == order.CustomerName) // Using CustomerName as the link for now
-            .ToListAsync();
+        order.Id = Guid.NewGuid().ToString();
+        order.Type = "order";
+        order.OrderDate = DateTime.UtcNow;
 
-        // 3. Clear the cart
-        if (cartItems.Any())
+        foreach (var item in order.OrderItems)
         {
-            _context.CartItems.RemoveRange(cartItems);
+            var productId = item.ProductId.ToString();
+            item.Name = (await CosmosDb.TryReadAsync<Product>(_db.Products, productId, productId))?.Name;
         }
 
-        await _context.SaveChangesAsync();
-        
+        // 1. Save the Order first, so a failed cart delete can never lose an order
+        await _db.Orders.CreateItemAsync(order, new PartitionKey(order.Email));
+
+        // 2. Clear the cart. In our current React app, CustomerName carries the SessionId
+        if (CosmosDb.IsValidId(order.CustomerName))
+        {
+            try
+            {
+                await _db.Carts.DeleteItemAsync<Cart>(order.CustomerName, new PartitionKey(order.CustomerName));
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+            }
+        }
+
         return CreatedAtAction(nameof(GetOrders), new { id = order.Id }, order);
     }
 }

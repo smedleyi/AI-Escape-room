@@ -23,5 +23,5 @@ ru = products.client_connection.last_response_headers["x-ms-request-charge"]
 print(f"Point read id=28: {ms:.0f} ms, {ru} RU")
 print(json.dumps({k: v for k, v in doc.items() if not k.startswith("_")}, indent=2))
 
-for o in db.get_container_client("Orders").query_items("SELECT c.id, c.email, c.customerName, c.totalAmount, c.orderDate, ARRAY_LENGTH(c.items) AS lines FROM c", enable_cross_partition_query=True):
+for o in db.get_container_client("Orders").query_items("SELECT c.id, c.email, c.customerName, c.totalAmount, c.orderDate, ARRAY_LENGTH(c.orderItems) AS lines FROM c", enable_cross_partition_query=True):
     print("order:", o)

@@ -11,7 +11,7 @@ SELECT (
                 p.Name AS name,
                 p.Price AS price,
                 ci.Quantity AS quantity,
-                ci.DateAdded AS dateAdded
+                CONVERT(VARCHAR(30), ci.DateAdded, 126) + 'Z' AS dateAdded
             FROM CartItems ci
             JOIN Products p ON p.Id = ci.ProductId
             WHERE ci.SessionId = s.SessionId
