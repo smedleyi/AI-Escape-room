@@ -12,16 +12,30 @@ param cosmosEndpoint string
 
 param cosmosDatabase string = 'StyleVerseDb'
 
+@description('Application Insights connection string')
+param appInsightsConnectionString string
+
+@description('Log Analytics workspace for App Service HTTP and console logs')
+param logAnalyticsWorkspaceId string
+
+@description('Upper bound for automatic scale-out of this region')
+@minValue(1)
+param maxInstances int = 10
+
+// Premium v3 is required for automatic scaling: App Service adds pre-warmed instances as HTTP load rises.
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   name: appServicePlanName
   location: location
   kind: 'linux'
   sku: {
-    name: 'B1'
-    tier: 'Basic'
+    name: 'P0v3'
+    tier: 'PremiumV3'
+    capacity: 1
   }
   properties: {
     reserved: true
+    elasticScaleEnabled: true
+    maximumElasticWorkerCount: maxInstances
   }
 }
 
@@ -35,6 +49,8 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
   properties: {
     serverFarmId: appServicePlan.id
     httpsOnly: true
+    // The app keeps no in-memory session state, so don't pin users to one instance.
+    clientAffinityEnabled: false
     siteConfig: {
       linuxFxVersion: 'DOTNETCORE|8.0'
       appCommandLine: 'dotnet StyleVerse.Backend.dll'
@@ -42,10 +58,20 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
       ftpsState: 'FtpsOnly'
       minTlsVersion: '1.2'
       healthCheckPath: '/api/health'
+      minimumElasticInstanceCount: 1
+      elasticWebAppScaleLimit: maxInstances
       appSettings: [
         {
           name: 'ASPNETCORE_ENVIRONMENT'
           value: 'Production'
+        }
+        {
+          name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+          value: appInsightsConnectionString
+        }
+        {
+          name: 'OTEL_SERVICE_NAME'
+          value: webAppName
         }
         {
           name: 'App__Region'
@@ -61,6 +87,24 @@ resource webApp 'Microsoft.Web/sites@2023-01-01' = {
         }
       ]
     }
+  }
+}
+
+resource webAppDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'to-log-analytics'
+  scope: webApp
+  properties: {
+    workspaceId: logAnalyticsWorkspaceId
+    logs: [
+      {
+        category: 'AppServiceHTTPLogs'
+        enabled: true
+      }
+      {
+        category: 'AppServiceConsoleLogs'
+        enabled: true
+      }
+    ]
   }
 }
 

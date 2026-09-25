@@ -15,12 +15,20 @@ public class OrdersController : ControllerBase
 
     public OrdersController(CosmosDb db) => _db = db;
 
-    // With ?email=, the query targets that single partition; without it, all orders are listed.
+    // Newest first, one bounded page per call; pass X-Continuation-Token back as ?continuationToken= for the next page.
+    // With ?email=, the query targets that single partition.
     [HttpGet]
-    public async Task<ActionResult> GetOrders([FromQuery] string? email = null)
+    public async Task<ActionResult> GetOrders([FromQuery] string? email = null, [FromQuery] int limit = 100, [FromQuery] string? continuationToken = null)
     {
-        var orders = (await CosmosDb.ReadAllAsync<Order>(_db.Orders, string.IsNullOrWhiteSpace(email) ? null : email))
-            .OrderBy(o => o.OrderDate).ToList();
+        if (limit is < 1 or > 500) return BadRequest("limit must be between 1 and 500.");
+
+        var options = new QueryRequestOptions { MaxItemCount = limit };
+        if (!string.IsNullOrWhiteSpace(email)) options.PartitionKey = new PartitionKey(email);
+
+        using var feed = _db.Orders.GetItemQueryIterator<Order>("SELECT * FROM c ORDER BY c.orderDate DESC", continuationToken, options);
+        var page = await feed.ReadNextAsync();
+        var orders = page.ToList();
+        if (page.ContinuationToken is not null) Response.Headers["X-Continuation-Token"] = page.ContinuationToken;
 
         // Perform Security Check
         if (!SecurityCheck.OrderSecurityCheck(orders))
@@ -55,7 +63,7 @@ public class OrdersController : ControllerBase
         }
 
         // 1. Save the Order first, so a failed cart delete can never lose an order
-        await _db.Orders.CreateItemAsync(order, new PartitionKey(order.Email));
+        await _db.Orders.CreateItemAsync(order, new PartitionKey(order.Email), new ItemRequestOptions { EnableContentResponseOnWrite = false });
 
         // 2. Clear the cart. In our current React app, CustomerName carries the SessionId
         if (CosmosDb.IsValidId(order.CustomerName))

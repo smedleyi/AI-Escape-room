@@ -94,5 +94,42 @@ resource route 'Microsoft.Cdn/profiles/afdEndpoints/routes@2024-02-01' = {
   }
 }
 
+// Vite bundles under /assets have content-hashed names, so they're safe to cache at the edge.
+resource assetsRoute 'Microsoft.Cdn/profiles/afdEndpoints/routes@2024-02-01' = {
+  parent: endpoint
+  name: 'static-assets'
+  dependsOn: [
+    origins
+    route
+  ]
+  properties: {
+    originGroup: {
+      id: originGroup.id
+    }
+    supportedProtocols: [
+      'Http'
+      'Https'
+    ]
+    patternsToMatch: [
+      '/assets/*'
+    ]
+    forwardingProtocol: 'HttpsOnly'
+    linkToDefaultDomain: 'Enabled'
+    httpsRedirect: 'Enabled'
+    enabledState: 'Enabled'
+    cacheConfiguration: {
+      queryStringCachingBehavior: 'IgnoreQueryString'
+      compressionSettings: {
+        isCompressionEnabled: true
+        contentTypesToCompress: [
+          'application/javascript'
+          'text/javascript'
+          'text/css'
+        ]
+      }
+    }
+  }
+}
+
 output frontDoorHostName string = endpoint.properties.hostName
 output frontDoorUrl string = 'https://${endpoint.properties.hostName}'

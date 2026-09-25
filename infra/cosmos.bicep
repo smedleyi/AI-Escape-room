@@ -27,7 +27,7 @@ param accountName string = 'cosmos-styleverse-${uniqueString(resourceGroup().id)
 
 @description('Maximum autoscale throughput per container (scales down to 10% of this)')
 @minValue(1000)
-param autoscaleMaxThroughput int = 1000
+param autoscaleMaxThroughput int = 4000
 
 @description('Web apps whose managed identities get Cosmos data read/write access (one per region)')
 param webAppNames array = [

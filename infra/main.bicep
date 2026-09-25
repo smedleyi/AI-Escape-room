@@ -19,6 +19,18 @@ param sqlDatabaseName string = 'StyleVerseDb'
 @description('Cosmos DB account the apps read and write')
 param cosmosAccountName string = 'cosmos-styleverse-${uniqueString(resourceGroup().id)}'
 
+@description('Application Insights and Log Analytics created by monitoring.bicep')
+param appInsightsName string = 'appi-styleverse-${uniqueString(resourceGroup().id)}'
+param logAnalyticsWorkspaceName string = 'log-styleverse-${uniqueString(resourceGroup().id)}'
+
+resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: appInsightsName
+}
+
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
+  name: logAnalyticsWorkspaceName
+}
+
 @description('One App Service per region, each paired with its nearest Cosmos replica')
 param webRegions array = [
   {
@@ -88,6 +100,8 @@ module webApps 'modules/webapp.bicep' = [for r in webRegions: {
     appServicePlanName: r.planName
     webAppName: r.appName
     cosmosEndpoint: 'https://${cosmosAccountName}.documents.azure.com:443/'
+    appInsightsConnectionString: appInsights.properties.ConnectionString
+    logAnalyticsWorkspaceId: logAnalytics.id
   }
 }]
 

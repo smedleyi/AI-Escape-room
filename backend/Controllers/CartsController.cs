@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Azure.Cosmos;
 using StyleVerse.Backend.Data;
@@ -34,22 +35,24 @@ namespace StyleVerse.Backend.Controllers
             var product = await CosmosDb.TryReadAsync<Product>(_db.Products, productId, productId);
             if (product is null) return BadRequest("Unknown product.");
 
-            var cart = await CosmosDb.TryReadAsync<Cart>(_db.Carts, request.SessionId, request.SessionId)
-                ?? new Cart { Id = request.SessionId, SessionId = request.SessionId };
-
-            var line = cart.Items.FirstOrDefault(l => l.ProductId == product.ProductId);
-            if (line is null)
+            CartLine? line = null;
+            var (cart, conflict) = await UpdateCartAsync(request.SessionId, createIfMissing: true, c =>
             {
-                line = new CartLine { ProductId = product.ProductId, Name = product.Name, Price = product.Price, Quantity = request.Quantity };
-                cart.Items.Add(line);
-            }
-            else
-            {
-                line.Quantity += request.Quantity;
-            }
+                line = c.Items.FirstOrDefault(l => l.ProductId == product.ProductId);
+                if (line is null)
+                {
+                    line = new CartLine { ProductId = product.ProductId, Name = product.Name, Price = product.Price, Quantity = request.Quantity };
+                    c.Items.Add(line);
+                }
+                else
+                {
+                    line.Quantity += request.Quantity;
+                }
+                return true;
+            });
 
-            await _db.Carts.UpsertItemAsync(cart, new PartitionKey(cart.SessionId));
-            return Ok(ToView(cart.SessionId, line));
+            if (conflict) return Conflict("Cart was modified concurrently; please retry.");
+            return Ok(ToView(cart!.SessionId, line!));
         }
 
         [HttpDelete("{sessionId}/{productId:int}")]
@@ -57,11 +60,51 @@ namespace StyleVerse.Backend.Controllers
         {
             if (!CosmosDb.IsValidId(sessionId)) return BadRequest();
 
-            var cart = await CosmosDb.TryReadAsync<Cart>(_db.Carts, sessionId, sessionId);
-            if (cart is null || cart.Items.RemoveAll(l => l.ProductId == productId) == 0) return NotFound();
+            var (cart, conflict) = await UpdateCartAsync(sessionId, createIfMissing: false,
+                c => c.Items.RemoveAll(l => l.ProductId == productId) > 0);
 
-            await _db.Carts.UpsertItemAsync(cart, new PartitionKey(cart.SessionId));
-            return NoContent();
+            if (conflict) return Conflict("Cart was modified concurrently; please retry.");
+            return cart is null ? NotFound() : NoContent();
+        }
+
+        // Read-modify-write guarded by the document ETag, so two concurrent requests can't overwrite each other.
+        private async Task<(Cart? Cart, bool Conflict)> UpdateCartAsync(string sessionId, bool createIfMissing, Func<Cart, bool> apply)
+        {
+            var partitionKey = new PartitionKey(sessionId);
+            for (var attempt = 0; attempt < 5; attempt++)
+            {
+                if (attempt > 0) await Task.Delay(Random.Shared.Next(10, 50 * attempt));
+
+                Cart? cart;
+                string? etag = null;
+                try
+                {
+                    var read = await _db.Carts.ReadItemAsync<Cart>(sessionId, partitionKey);
+                    cart = read.Resource;
+                    etag = read.ETag;
+                }
+                catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+                {
+                    if (!createIfMissing) return (null, false);
+                    cart = new Cart { Id = sessionId, SessionId = sessionId };
+                }
+
+                if (!apply(cart)) return (null, false);
+
+                try
+                {
+                    var options = new ItemRequestOptions { IfMatchEtag = etag, EnableContentResponseOnWrite = false };
+                    if (etag is null)
+                        await _db.Carts.CreateItemAsync(cart, partitionKey, options);
+                    else
+                        await _db.Carts.ReplaceItemAsync(cart, sessionId, partitionKey, options);
+                    return (cart, false);
+                }
+                catch (CosmosException ex) when (ex.StatusCode is HttpStatusCode.PreconditionFailed or HttpStatusCode.Conflict)
+                {
+                }
+            }
+            return (null, true);
         }
 
         private static CartItemView ToView(string sessionId, CartLine line) =>

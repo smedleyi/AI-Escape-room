@@ -1,10 +1,24 @@
+using Azure.Core;
 using Azure.Identity;
+using Azure.Monitor.OpenTelemetry.AspNetCore;
 using Microsoft.Azure.Cosmos;
+using OpenTelemetry.Trace;
 using StyleVerse.Backend.Data;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Requests and Cosmos calls go to Application Insights (Application Map, Live Metrics) when it's configured.
+if (!string.IsNullOrWhiteSpace(builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
+{
+    AppContext.SetSwitch("Azure.Experimental.EnableActivitySource", true);
+    builder.Services.AddOpenTelemetry()
+        .UseAzureMonitor()
+        .WithTracing(tracing => tracing.AddSource("Azure.Cosmos.Operation"));
+}
+
+builder.Services.AddMemoryCache();
 
 // Add services to the container.
 // Setup Controllers with JSON options to prevent Reference Loops
@@ -29,18 +43,24 @@ if (string.IsNullOrWhiteSpace(cosmosEndpoint))
 var appRegion = new AppRegion(builder.Configuration["App:Region"] is { Length: > 0 } r ? r : Regions.UKSouth);
 builder.Services.AddSingleton(appRegion);
 
-builder.Services.AddSingleton(new CosmosClient(cosmosEndpoint, new DefaultAzureCredential(), new CosmosClientOptions
+// On App Service use the managed identity directly (fast cold start); locally fall back to the az login.
+TokenCredential credential = Environment.GetEnvironmentVariable("IDENTITY_ENDPOINT") is not null
+    ? new ManagedIdentityCredential(ManagedIdentityId.SystemAssigned)
+    : new AzureCliCredential();
+
+builder.Services.AddSingleton(new CosmosClient(cosmosEndpoint, credential, new CosmosClientOptions
 {
     ApplicationName = "StyleVerse",
     ApplicationRegion = appRegion.Name,
     UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web),
+    CosmosClientTelemetryOptions = new CosmosClientTelemetryOptions { DisableDistributedTracing = false },
 }));
 builder.Services.AddSingleton<CosmosDb>();
 
 // CORS for Frontend
 builder.Services.AddCors(options => {
     options.AddPolicy("AllowAll",
-        b => b.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader().WithExposedHeaders("X-Azure-Region", "X-Cosmos-Region"));
+        b => b.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader().WithExposedHeaders("X-Azure-Region", "X-Cosmos-Region", "X-Continuation-Token"));
 });
 
 var app = builder.Build();
