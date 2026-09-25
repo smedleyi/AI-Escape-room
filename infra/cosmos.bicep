@@ -1,7 +1,26 @@
 targetScope = 'resourceGroup'
 
-@description('Azure region for the Cosmos DB account')
+@description('Primary region of the Cosmos DB account')
 param location string = 'uksouth'
+
+@description('Replica regions in failover order. Zone redundancy cannot be changed on an existing region.')
+param regions array = [
+  {
+    locationName: location
+    failoverPriority: 0
+    isZoneRedundant: false
+  }
+  {
+    locationName: 'eastus2'
+    failoverPriority: 1
+    isZoneRedundant: true
+  }
+  {
+    locationName: 'eastasia'
+    failoverPriority: 2
+    isZoneRedundant: true
+  }
+]
 
 @description('Globally unique Cosmos DB account name')
 param accountName string = 'cosmos-styleverse-${uniqueString(resourceGroup().id)}'
@@ -39,16 +58,13 @@ resource account 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
   kind: 'GlobalDocumentDB'
   properties: {
     databaseAccountOfferType: 'Standard'
+    // Session: each shopper reads their own writes while every region serves local reads and writes.
     consistencyPolicy: {
       defaultConsistencyLevel: 'Session'
     }
-    locations: [
-      {
-        locationName: location
-        failoverPriority: 0
-        isZoneRedundant: false
-      }
-    ]
+    locations: regions
+    enableMultipleWriteLocations: true
+    enableAutomaticFailover: true
     minimalTlsVersion: 'Tls12'
     publicNetworkAccess: 'Enabled'
   }
@@ -90,6 +106,11 @@ resource sqlContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
             path: '/"_etag"/?'
           }
         ]
+      }
+      // Multi-region writes: concurrent edits to the same document resolve to the latest write.
+      conflictResolutionPolicy: {
+        mode: 'LastWriterWins'
+        conflictResolutionPath: '/_ts'
       }
     }
     options: {
