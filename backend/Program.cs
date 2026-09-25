@@ -25,10 +25,14 @@ if (string.IsNullOrWhiteSpace(cosmosEndpoint))
     throw new InvalidOperationException("Cosmos:Endpoint is not configured.");
 }
 
+// Each regional App Service sets App__Region to its own region; the SDK then reads from the nearest replica.
+var appRegion = new AppRegion(builder.Configuration["App:Region"] is { Length: > 0 } r ? r : Regions.UKSouth);
+builder.Services.AddSingleton(appRegion);
+
 builder.Services.AddSingleton(new CosmosClient(cosmosEndpoint, new DefaultAzureCredential(), new CosmosClientOptions
 {
     ApplicationName = "StyleVerse",
-    ApplicationRegion = Regions.UKSouth,
+    ApplicationRegion = appRegion.Name,
     UseSystemTextJsonSerializerWithOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web),
 }));
 builder.Services.AddSingleton<CosmosDb>();
@@ -36,7 +40,7 @@ builder.Services.AddSingleton<CosmosDb>();
 // CORS for Frontend
 builder.Services.AddCors(options => {
     options.AddPolicy("AllowAll",
-        b => b.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+        b => b.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader().WithExposedHeaders("X-Azure-Region", "X-Cosmos-Region"));
 });
 
 var app = builder.Build();
@@ -56,3 +60,5 @@ app.MapControllers();
 app.MapFallbackToFile("index.html"); // Hooks React routing
 
 app.Run();
+
+public record AppRegion(string Name);

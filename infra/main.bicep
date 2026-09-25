@@ -16,14 +16,31 @@ param sqlServerName string = 'sql-styleverse-${uniqueString(resourceGroup().id)}
 @description('Name of the SQL database')
 param sqlDatabaseName string = 'StyleVerseDb'
 
-@description('Name of the App Service plan')
-param appServicePlanName string = 'asp-styleverse-${uniqueString(resourceGroup().id)}'
-
-@description('Name of the web app')
-param webAppName string = 'web-styleverse-${uniqueString(resourceGroup().id)}'
-
-@description('Cosmos DB account the app reads and writes')
+@description('Cosmos DB account the apps read and write')
 param cosmosAccountName string = 'cosmos-styleverse-${uniqueString(resourceGroup().id)}'
+
+@description('One App Service per region, each paired with its nearest Cosmos replica')
+param webRegions array = [
+  {
+    location: 'westeurope'
+    displayName: 'West Europe'
+    planName: 'asp-styleverse-${uniqueString(resourceGroup().id)}'
+    appName: 'web-styleverse-${uniqueString(resourceGroup().id)}'
+  }
+  // East US 2 has no App Service quota in this subscription; Central US is ~25 ms from the East US 2 Cosmos replica.
+  {
+    location: 'centralus'
+    displayName: 'Central US'
+    planName: 'asp-styleverse-cus-${uniqueString(resourceGroup().id)}'
+    appName: 'web-styleverse-cus-${uniqueString(resourceGroup().id)}'
+  }
+  {
+    location: 'eastasia'
+    displayName: 'East Asia'
+    planName: 'asp-styleverse-eas-${uniqueString(resourceGroup().id)}'
+    appName: 'web-styleverse-eas-${uniqueString(resourceGroup().id)}'
+  }
+]
 
 resource sqlServer 'Microsoft.Sql/servers@2022-05-01-preview' = {
   name: sqlServerName
@@ -63,56 +80,19 @@ resource sqlDatabase 'Microsoft.Sql/servers/databases@2022-05-01-preview' = {
   }
 }
 
-resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
-  name: appServicePlanName
-  location: location
-  kind: 'linux'
-  sku: {
-    name: 'B1'
-    tier: 'Basic'
+module webApps 'modules/webapp.bicep' = [for r in webRegions: {
+  name: 'webapp-${r.location}'
+  params: {
+    location: r.location
+    regionDisplayName: r.displayName
+    appServicePlanName: r.planName
+    webAppName: r.appName
+    cosmosEndpoint: 'https://${cosmosAccountName}.documents.azure.com:443/'
   }
-  properties: {
-    reserved: true
-  }
-}
-
-resource webApp 'Microsoft.Web/sites@2023-01-01' = {
-  name: webAppName
-  location: location
-  kind: 'app,linux'
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    serverFarmId: appServicePlan.id
-    httpsOnly: true
-    siteConfig: {
-      linuxFxVersion: 'DOTNETCORE|8.0'
-      appCommandLine: 'dotnet StyleVerse.Backend.dll'
-      alwaysOn: true
-      ftpsState: 'FtpsOnly'
-      minTlsVersion: '1.2'
-      appSettings: [
-        {
-          name: 'ASPNETCORE_ENVIRONMENT'
-          value: 'Production'
-        }
-        {
-          name: 'Cosmos__Endpoint'
-          value: 'https://${cosmosAccountName}.documents.azure.com:443/'
-        }
-        {
-          name: 'Cosmos__Database'
-          value: 'StyleVerseDb'
-        }
-      ]
-    }
-  }
-}
+}]
 
 output sqlServerName string = sqlServer.name
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output databaseName string = sqlDatabase.name
-output webAppName string = webApp.name
-output webAppPrincipalId string = webApp.identity.principalId
-output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
+output webAppNames array = [for (r, i) in webRegions: webApps[i].outputs.name]
+output webAppHostNames array = [for (r, i) in webRegions: webApps[i].outputs.hostName]

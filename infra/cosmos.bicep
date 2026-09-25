@@ -29,8 +29,12 @@ param accountName string = 'cosmos-styleverse-${uniqueString(resourceGroup().id)
 @minValue(1000)
 param autoscaleMaxThroughput int = 1000
 
-@description('Web app whose managed identity gets Cosmos data read/write access')
-param webAppName string = 'web-styleverse-${uniqueString(resourceGroup().id)}'
+@description('Web apps whose managed identities get Cosmos data read/write access (one per region)')
+param webAppNames array = [
+  'web-styleverse-${uniqueString(resourceGroup().id)}'
+  'web-styleverse-cus-${uniqueString(resourceGroup().id)}'
+  'web-styleverse-eas-${uniqueString(resourceGroup().id)}'
+]
 
 @description('Optional Entra object IDs (e.g. developers) that also get data read/write access')
 param extraDataContributorIds array = []
@@ -121,22 +125,22 @@ resource sqlContainers 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
   }
 }]
 
-resource webApp 'Microsoft.Web/sites@2023-01-01' existing = {
-  name: webAppName
-}
+resource webApps 'Microsoft.Web/sites@2023-01-01' existing = [for name in webAppNames: {
+  name: name
+}]
 
 // Built-in "Cosmos DB Built-in Data Contributor" role
 var dataContributorRoleId = '${account.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
 
-resource webAppDataContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
+resource webAppDataContributors 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = [for (name, i) in webAppNames: {
   parent: account
-  name: guid(account.id, webApp.id, dataContributorRoleId)
+  name: guid(account.id, resourceId('Microsoft.Web/sites', name), dataContributorRoleId)
   properties: {
     roleDefinitionId: dataContributorRoleId
-    principalId: webApp.identity.principalId
+    principalId: webApps[i].identity.principalId
     scope: account.id
   }
-}
+}]
 
 resource extraDataContributors 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = [for principalId in extraDataContributorIds: {
   parent: account

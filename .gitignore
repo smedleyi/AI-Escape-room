@@ -56,3 +56,5 @@ nunit-*.xml
 # JavaScript
 node_modules/
 wwwroot/node_modules/
+# macOS
+.DS_Store
